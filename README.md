@@ -10,3 +10,14 @@ LLM & Diffusion 모델 기반의 다차원 감정 분석 그림일기 서비스
 ### Project Resources
 - [Figma Design]
 - [Project Document]
+
+## Team Roles
+- @kanjunwon
+- @jonghyun819
+- @eunchae0118
+- @jk0263jg
+
+## Timeline
+- **설계 단계 (Design)**: 2026.03 ~ 2026.06
+- **개발 단계 (Development)**: 2026.06 ~ 2026.10
+- **최종 발표 (Final)**: 2026.11
