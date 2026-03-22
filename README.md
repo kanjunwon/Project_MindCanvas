@@ -4,10 +4,10 @@
 ---
 
 ## Table of Contents
-- [Project Overview](#-project-overview)
-- [Technical Stack](#-technical-stack)
-- [Team Members](#-team-members)
-- [Timeline](#-timeline)
+- [Project Overview](#project-overview)
+- [Technical Stack](#technical-stack)
+- [Team Members](#team-members)
+- [Timeline](#timeline)
 
 ---
 
