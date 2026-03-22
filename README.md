@@ -7,6 +7,6 @@ LLM & Diffusion 모델 기반의 다차원 감정 분석 그림일기 서비스
 - AI: GPT-4o-mini, Stable Diffusion 3
 - DB: PostgreSQL 16, Pinecone
 
-### 🔗 Project Resources
+### Project Resources
 - [Figma Design]
 - [Project Document]
