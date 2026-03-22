@@ -1,6 +1,10 @@
 # 감정서가
 LLM & Diffusion 모델 기반의 다차원 감정 분석 그림일기 서비스
 
+## Problem & Solution
+Problem: 기존 다이어리 서비스의 높은 기록 장벽(백지 공포) 및 단편적인 감정 기록의 한계
+Solution: LLM을 통한 서사 자동 생성과 Diffusion 기반 시각화를 통해 기록의 재미와 정서적 보상을 극대화함
+
 ### Tech Stack
 - Frontend: Kotlin (Android, Jetpack Compose)
 - Backend: Spring Boot 3.4, FastAPI
