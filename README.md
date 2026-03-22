@@ -8,8 +8,8 @@ LLM & Diffusion 모델 기반의 다차원 감정 분석 그림일기 서비스
 - DB: PostgreSQL 16, Pinecone
 
 ### Project Resources
-- [Figma Design]
-- [Project Document] : https://docs.google.com/document/d/1rN4pjJJaC9xtTEBdc_1OBcnA2hCtDWIfItZG0ovJpJA/edit?usp=sharing
+- Figma Design
+- Project Document: https://docs.google.com/document/d/1rN4pjJJaC9xtTEBdc_1OBcnA2hCtDWIfItZG0ovJpJA/edit?usp=sharing
 
 ## Team Members
 
