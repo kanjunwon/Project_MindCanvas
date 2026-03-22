@@ -12,12 +12,10 @@ LLM & Diffusion 모델 기반의 다차원 감정 분석 그림일기 서비스
 - [Project Document]
 
 ## Team Roles
-- @kanjunwon
-- @jonghyun819
-- @eunchae0118
-- @jk0263jg
+| <img src="https://github.com/kanjunwon.png" width="100"> | <img src="https://github.com/jonghyun819.png" width="100"> | <img src="https://github.com/eunchae0118.png" width="100"> | <img src="https://github.com/jk0263jg.png" width="100"> |
+| https://github.com/kanjunwon | https://github.com/jonghyun819 | https://github.com/eunchae0118 | https://github.com/jk0263jg |
 
 ## Timeline
-- **설계 단계 (Design)**: 2026.03 ~ 2026.06
-- **개발 단계 (Development)**: 2026.06 ~ 2026.10
-- **최종 발표 (Final)**: 2026.11
+- **설계 단계**: 2026.03 ~ 2026.06
+- **개발 단계**: 2026.06 ~ 2026.10
+- **최종 발표**: 2026.11
