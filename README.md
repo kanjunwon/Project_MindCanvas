@@ -57,7 +57,6 @@
 | :---: | :---: | :---: | :---: |
 | <img src="https://github.com/kanjunwon.png" width="150"> | <img src="https://github.com/jonghyun819.png" width="150"> | <img src="https://github.com/eunchae0118.png" width="150"> | <img src="https://github.com/jk0263jg.png" width="150"> |
 | [@kanjunwon](https://github.com/kanjunwon) | [@jonghyun819](https://github.com/jonghyun819) | [@eunchae0118](https://github.com/eunchae0118) | [@jk0263jg](https://github.com/jk0263jg) |
-| **Leader / AI Arch** | **Android Dev** | **UI/UX Design** | **Backend / DB** |
 
 ---
 
