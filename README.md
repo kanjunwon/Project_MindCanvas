@@ -36,7 +36,8 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 
 ### **AI & Database**
-![OpenAI](https://img.shields.io/badge/GPT--4o--mini-412991?style=for-the-badge&logo=openai&logoColor=white)
+![KoBERT](https://img.shields.io/badge/KoBERT-FFD400?style=for-the-badge&logo=google-cloud&logoColor=black)
+![LLaMA 3](https://img.shields.io/badge/LLaMA--3-0467DF?style=for-the-badge&logo=meta&logoColor=white)
 ![Stability AI](https://img.shields.io/badge/SD3-000000?style=for-the-badge&logo=stabilityai&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Pinecone](https://img.shields.io/badge/Pinecone-000000?style=for-the-badge&logo=pinecone&logoColor=white)
