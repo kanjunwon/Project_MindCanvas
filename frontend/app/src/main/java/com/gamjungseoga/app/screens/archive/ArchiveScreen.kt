@@ -71,14 +71,20 @@ private fun formatArchiveDate(createdAt: String?): String {
 private fun archiveTitle(entry: DiaryEntry): String =
     entry.topEmotion?.let { "${it} 날" } ?: "기록한 날"
 
+// entry의 created_at을 파싱해서 선택한 연/월과 같은 달인지 확인 (파싱 실패한 항목은 어느 달에도 안 걸림)
+private fun DiaryEntry.isInMonth(yearMonth: YearMonth): Boolean {
+    val created = createdAt?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() } ?: return false
+    return YearMonth.from(created) == yearMonth
+}
+
 @Composable
 fun ArchiveScreen(diaryListViewModel: DiaryListViewModel = viewModel()) {
-    // 날짜 선택은 헤더에 표시되는 라벨만 바꾸고, 목록 자체는 필터링하지 않음
-    // (피그마 디자인도 5월/6월 기록이 한 그리드에 같이 보이는 구조 - 실제 월별
-    // 페이지네이션은 다음 단계에서 붙이기)
     var selectedYearMonth by remember { mutableStateOf(YearMonth.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
     val listState = diaryListViewModel.state
+    val monthEntries = remember(listState, selectedYearMonth) {
+        (listState as? DiaryListState.Loaded)?.diaries?.filter { it.isInMonth(selectedYearMonth) }.orEmpty()
+    }
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
@@ -105,12 +111,12 @@ fun ArchiveScreen(diaryListViewModel: DiaryListViewModel = viewModel()) {
                 )
             }
             is DiaryListState.Loaded -> {
-                if (listState.diaries.isEmpty()) {
+                if (monthEntries.isEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text("아직 기록한 일기가 없어요.", style = MaterialTheme.typography.bodyMedium, color = MonthLabelGray)
+                        Text("이 달에 기록한 일기가 없어요.", style = MaterialTheme.typography.bodyMedium, color = MonthLabelGray)
                     }
                 } else {
-                    items(listState.diaries) { entry ->
+                    items(monthEntries) { entry ->
                         ArchiveCard(entry)
                     }
                 }

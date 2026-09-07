@@ -42,7 +42,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.gamjungseoga.app.network.ApiClient
 import com.gamjungseoga.app.network.DailyStatsResponse
+import com.gamjungseoga.app.network.EmotionDistributionItem
+import com.gamjungseoga.app.network.EmotionFlowPoint
 import com.gamjungseoga.app.network.EmotionScore
+import com.gamjungseoga.app.network.MonthlyStatsResponse
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -105,9 +109,11 @@ data class TopEmotionBar(val label: String, val percent: Int, val barHeight: Dp,
 private val dailyBarColors = listOf(ChartMint, AccentGreen, RibbonPink)
 private val dailyBarMaxHeight = 138.dp
 
-// GET /stats/daily의 top3_emotions는 그 날 여러 일기의 점수를 그냥 합산한 값이라(1.0 안 넘게
-// 정규화돼있지 않음) 3개 막대끼리 상대 비중으로 다시 나눠서 60/30/10 같은 퍼센트를 만듦
-private fun toTopEmotionBars(scores: List<EmotionScore>): List<TopEmotionBar> {
+private val monthlyBarColors = listOf(AccentBlue, AccentPurple, AccentNavy)
+
+// GET /stats/daily, /stats/monthly의 top3_emotions는 여러 일기의 점수를 그냥 합산한 값이라(1.0 안
+// 넘게 정규화돼있지 않음) 3개 막대끼리 상대 비중으로 다시 나눠서 60/30/10 같은 퍼센트를 만듦
+private fun toTopEmotionBars(scores: List<EmotionScore>, palette: List<Color> = dailyBarColors): List<TopEmotionBar> {
     val total = scores.sumOf { it.score }
     if (scores.isEmpty() || total <= 0) return emptyList()
     return scores.mapIndexed { index, item ->
@@ -116,27 +122,97 @@ private fun toTopEmotionBars(scores: List<EmotionScore>): List<TopEmotionBar> {
             label = item.emotion,
             percent = percent,
             barHeight = dailyBarMaxHeight * (percent / 100f).coerceAtLeast(0.15f),
-            color = dailyBarColors[index % dailyBarColors.size]
+            color = palette[index % palette.size]
         )
     }
 }
 
-// TODO: 실제 데이터로 교체 (백엔드에서 월별 감정 통계 불러오기)
-private val monthlyTopEmotions = listOf(
-    TopEmotionBar("뿌듯한", 60, 138.dp, AccentBlue),
-    TopEmotionBar("편안한", 30, 95.dp, AccentPurple),
-    TopEmotionBar("행복한", 10, 56.dp, AccentNavy)
-)
-
 data class WeekPoint(val label: String, val value: Float)
 
-private val sampleWeeklyFlow = listOf(
-    WeekPoint("1주차", 0.55f),
-    WeekPoint("2주차", 0.35f),
-    WeekPoint("3주차", 0.85f),
-    WeekPoint("4주차", 0.6f),
-    WeekPoint("5주차", 0.3f)
-)
+// emotion_flow는 하루 단위 sentiment_score만 내려주므로, 그 달 안에서 일(day) 순서대로 7일씩
+// 묶어 주차 평균을 내고, 차트가 쓰기 좋게 그 달 안에서의 최소/최대로 다시 0~1로 정규화함
+// (sentiment_score의 실제 범위를 백엔드 코드를 보지 않고는 알 수 없어서, 상대적인 높낮이만 표현)
+private fun toWeeklyFlow(emotionFlow: List<EmotionFlowPoint>): List<WeekPoint> {
+    val parsed = emotionFlow.mapNotNull { point ->
+        runCatching { LocalDate.parse(point.date) }.getOrNull()?.let { it to point.sentimentScore }
+    }
+    if (parsed.isEmpty()) return emptyList()
+
+    val weeklyAverages = parsed
+        .groupBy { (date, _) -> (date.dayOfMonth - 1) / 7 }
+        .toSortedMap()
+        .map { (weekIndex, entries) -> weekIndex to entries.map { it.second }.average() }
+
+    val min = weeklyAverages.minOf { it.second }
+    val max = weeklyAverages.maxOf { it.second }
+    val range = (max - min).takeIf { it > 0.0 }
+
+    return weeklyAverages.map { (weekIndex, avg) ->
+        val normalized = range?.let { ((avg - min) / it).toFloat() } ?: 0.5f
+        WeekPoint(label = "${weekIndex + 1}주차", value = normalized.coerceIn(0.05f, 1f))
+    }
+}
+
+// GET /stats/monthly의 emotion_distribution이 감정별 색상(hex)을 같이 내려주므로, 그 색을
+// 파싱해서 캘린더 셀/대표 감정 강조색으로 그대로 재사용 (프론트에서 감정-색 매핑을 새로 만들지 않음)
+private fun parseHexColor(hex: String): Color? = runCatching {
+    val cleaned = hex.removePrefix("#")
+    val argb = when (cleaned.length) {
+        6 -> 0xFF000000L or cleaned.toLong(16)
+        8 -> cleaned.toLong(16)
+        else -> return null
+    }
+    Color(argb.toInt())
+}.getOrNull()
+
+private fun colorForEmotion(emotion: String?, distribution: List<EmotionDistributionItem>): Color? {
+    if (emotion == null) return null
+    val hex = distribution.firstOrNull { it.emotion == emotion }?.color ?: return null
+    return parseHexColor(hex)
+}
+
+// 이번 달 캘린더를 월요일 시작 7열 그리드로 채움. 일기가 없는 날은 null(빈 칸),
+// 일기는 있는데 색을 못 찾은 날은 EmptyGray로 표시.
+private fun toDayColors(yearMonth: YearMonth, stats: MonthlyStatsResponse): List<Color?> {
+    val flowByDate = stats.emotionFlow.associateBy { it.date }
+    val leadingBlanks = yearMonth.atDay(1).dayOfWeek.value - 1
+    val cells = mutableListOf<Color?>()
+    repeat(leadingBlanks) { cells += null }
+    for (day in 1..yearMonth.lengthOfMonth()) {
+        val dateStr = yearMonth.atDay(day).format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val flowPoint = flowByDate[dateStr]
+        cells += when {
+            flowPoint == null -> null
+            else -> colorForEmotion(flowPoint.topEmotion, stats.emotionDistribution) ?: EmptyGray
+        }
+    }
+    while (cells.size % 7 != 0) cells += null
+    return cells
+}
+
+private val feltDayFormatter = DateTimeFormatter.ofPattern("M월 d일")
+private fun formatFeltDate(dateStr: String?): String =
+    dateStr?.let { runCatching { LocalDate.parse(it).format(feltDayFormatter) }.getOrNull() } ?: "-"
+
+// 특정 날짜의 top3_emotions(daily 통계)를 긍정/부정 카드용 막대로 변환
+private fun toFeltEmotionBars(scores: List<EmotionScore>, color: Color): List<FeltEmotionBar> {
+    val total = scores.sumOf { it.score }
+    if (scores.isEmpty() || total <= 0) return emptyList()
+    return scores.map { item ->
+        FeltEmotionBar(label = item.emotion, percent = (item.score / total * 100).toInt().coerceIn(0, 100), color = color)
+    }
+}
+
+private val personPillPalette = listOf(RibbonPink to PillPinkBg, AccentGreen to PillGreenBg, AccentOrange to PillOrangeBg)
+private val placePillPalette = listOf(AccentNavy to PillBlueBg, AccentPurple to PillPurpleBg, AccentBlue to PillBlueBg)
+
+// top_companion/top_place의 top3_emotions는 점수 합산값이라 진짜 "횟수"는 아니지만, 배지에 쓸
+// 정수가 필요해서 반올림해서 씀 (정확한 횟수가 필요하면 백엔드가 별도 필드로 내려줘야 함)
+private fun toPills(scores: List<EmotionScore>, palette: List<Pair<Color, Color>>): List<PillStat> =
+    scores.mapIndexed { index, item ->
+        val (dot, bg) = palette[index % palette.size]
+        PillStat(label = item.emotion, count = item.score.roundToInt().coerceAtLeast(0), dotColor = dot, bgColor = bg)
+    }
 
 private data class EmotionCategory(val label: String, val color: Color)
 
@@ -151,45 +227,12 @@ private val monthlyEmotionCategories = listOf(
     EmotionCategory("분노", ChartMint)
 )
 
-// TODO: 실제 데이터로 교체 (백엔드에서 날짜별 감정 색상 불러오기), null은 기록 없음/달력 여백
-// 피그마 node 50:109~50:138 실측 좌표 그대로 (열=요일, 행=주차) 재구성
-private val sampleMonthDayColors: List<Color?> = listOf(
-    null, null, AccentBlue, AccentNavy, ChartMint, AccentBlue, AccentOrange,
-    AccentBlue, AccentPurple, EmptyGray, EmptyGray, AccentPurple, AccentBlue, AccentNavy,
-    EmptyGray, AccentBlue, AccentPurple, AccentBlue, EmptyGray, AccentGreen, RibbonPink,
-    AccentBlue, AccentBlue, AccentBlue, AccentPurple, EmptyGray, AccentPurple, AccentBlue,
-    AccentTerracotta, RibbonPink, AccentNavy, EmptyGray, null, null, null
-)
-
 data class FeltEmotionBar(val label: String, val percent: Int, val color: Color)
-
-private val samplePositiveFeltBars = listOf(
-    FeltEmotionBar("설레는", 50, RibbonPink),
-    FeltEmotionBar("열정적인", 30, RibbonPink),
-    FeltEmotionBar("기대되는", 20, RibbonPink)
-)
-
-private val sampleNegativeFeltBars = listOf(
-    FeltEmotionBar("불안한", 70, AccentNavy),
-    FeltEmotionBar("우울한", 16, AccentNavy),
-    FeltEmotionBar("후회되는", 10, AccentNavy)
-)
 
 data class PillStat(val label: String, val count: Int, val dotColor: Color, val bgColor: Color)
 
-private val samplePersonPills = listOf(
-    PillStat("설레는", 5, RibbonPink, PillPinkBg),
-    PillStat("편안한", 3, AccentGreen, PillGreenBg),
-    PillStat("즐거운", 2, AccentOrange, PillOrangeBg)
-)
-
-private val samplePlacePills = listOf(
-    PillStat("우울한", 8, AccentNavy, PillBlueBg),
-    PillStat("슬픈", 6, AccentNavy, PillBlueBg),
-    PillStat("불안한", 4, AccentPurple, PillPurpleBg)
-)
-
-// TODO: 실제 데이터로 교체 (백엔드에서 월간 감정 리포트 데이터 불러오기)
+// 화면에 필요한 월간 리포트 값들을 한데 묶는 그릇. GET /stats/monthly 응답 + 가장 긍정/부정적인
+// 날의 daily 통계(top3_emotions)를 조합해서 만듦 (toMonthlyReportData 참고)
 data class MonthlyReportData(
     val topEmotion: String,
     val topEmotionPercent: Int,
@@ -209,31 +252,38 @@ data class MonthlyReportData(
     val placePills: List<PillStat>
 )
 
-private val sampleMonthlyReport = MonthlyReportData(
-    topEmotion = "우울함",
-    topEmotionPercent = 60,
-    topEmotionColor = HighlightBlue,
-    topEmotions = monthlyTopEmotions,
-    weeklyFlow = sampleWeeklyFlow,
-    dayColors = sampleMonthDayColors,
-    positiveFeltDate = "6월 13일",
-    positiveFeltBars = samplePositiveFeltBars,
-    negativeFeltDate = "6월 1일",
-    negativeFeltBars = sampleNegativeFeltBars,
-    personLabel = "연인",
-    personFeelingHighlight = "설레는",
-    personPills = samplePersonPills,
-    placeLabel = "학교",
-    placeFeelingHighlight = "우울한",
-    placePills = samplePlacePills
-)
+// GET /stats/monthly 응답과, 가장 긍정/부정적인 날 각각의 daily 통계(top3_emotions)를 합쳐서
+// 화면이 쓰는 형태로 변환. topCompanion/topPlace가 없으면(그 달에 who/where 기록이 없으면)
+// personLabel/placeLabel은 "기록 없음", 관련 pills는 빈 목록으로 내려감
+private fun toMonthlyReportData(
+    yearMonth: YearMonth,
+    stats: MonthlyStatsResponse,
+    positiveDayStats: DailyStatsResponse?,
+    negativeDayStats: DailyStatsResponse?
+): MonthlyReportData {
+    val topBars = toTopEmotionBars(stats.top3Emotions, monthlyBarColors)
+    return MonthlyReportData(
+        topEmotion = stats.topEmotion ?: "-",
+        topEmotionPercent = topBars.firstOrNull()?.percent ?: 0,
+        topEmotionColor = colorForEmotion(stats.topEmotion, stats.emotionDistribution) ?: HighlightBlue,
+        topEmotions = topBars,
+        weeklyFlow = toWeeklyFlow(stats.emotionFlow),
+        dayColors = toDayColors(yearMonth, stats),
+        positiveFeltDate = formatFeltDate(stats.mostPositiveDay),
+        positiveFeltBars = toFeltEmotionBars(positiveDayStats?.top3Emotions.orEmpty(), RibbonPink),
+        negativeFeltDate = formatFeltDate(stats.mostNegativeDay),
+        negativeFeltBars = toFeltEmotionBars(negativeDayStats?.top3Emotions.orEmpty(), AccentNavy),
+        personLabel = stats.topCompanion?.name ?: "기록 없음",
+        personFeelingHighlight = stats.topCompanion?.top3Emotions?.firstOrNull()?.emotion ?: "-",
+        personPills = toPills(stats.topCompanion?.top3Emotions.orEmpty(), personPillPalette),
+        placeLabel = stats.topPlace?.name ?: "기록 없음",
+        placeFeelingHighlight = stats.topPlace?.top3Emotions?.firstOrNull()?.emotion ?: "-",
+        placePills = toPills(stats.topPlace?.top3Emotions.orEmpty(), placePillPalette)
+    )
+}
 
 @Composable
-fun AnalysisScreen(
-    // TODO: 월간 리포트는 백엔드가 아직 주간 흐름/일별 감정 breakdown/사람·장소 전체 목록을
-    // 안 내려줘서 당장은 목업 유지 (GET /stats/monthly가 top_companion/top_place 각각 1개만 줌)
-    monthlyReport: MonthlyReportData = sampleMonthlyReport
-) {
+fun AnalysisScreen() {
     var selectedTab by remember { mutableStateOf(ReportTab.DAILY) }
     var selectedDate by remember { mutableStateOf(LocalDate.now()) }
     var selectedMonth by remember { mutableStateOf(YearMonth.now()) }
@@ -255,6 +305,43 @@ fun AnalysisScreen(
             dailyError = e.message ?: "통계를 불러오지 못했어요."
         } finally {
             dailyLoading = false
+        }
+    }
+
+    var monthlyStats by remember { mutableStateOf<MonthlyStatsResponse?>(null) }
+    var monthlyLoading by remember { mutableStateOf(true) }
+    var monthlyError by remember { mutableStateOf<String?>(null) }
+    var positiveDayStats by remember { mutableStateOf<DailyStatsResponse?>(null) }
+    var negativeDayStats by remember { mutableStateOf<DailyStatsResponse?>(null) }
+
+    LaunchedEffect(selectedMonth) {
+        monthlyLoading = true
+        monthlyError = null
+        positiveDayStats = null
+        negativeDayStats = null
+        try {
+            val stats = ApiClient.statsApi.getMonthlyStats(
+                userId = ApiClient.TEST_USER_ID,
+                year = selectedMonth.year,
+                month = selectedMonth.monthValue
+            )
+            monthlyStats = stats
+            // 가장 긍정/부정적인 날의 감정 breakdown은 월간 API에 없어서, 그 날짜로 daily API를
+            // 한 번씩 더 불러옴. 실패해도(예: 그 사이 서버가 끊김) 월간 리포트 전체를 막지는 않음
+            stats.mostPositiveDay?.let { date ->
+                positiveDayStats = runCatching {
+                    ApiClient.statsApi.getDailyStats(ApiClient.TEST_USER_ID, date)
+                }.getOrNull()
+            }
+            stats.mostNegativeDay?.let { date ->
+                negativeDayStats = runCatching {
+                    ApiClient.statsApi.getDailyStats(ApiClient.TEST_USER_ID, date)
+                }.getOrNull()
+            }
+        } catch (e: Exception) {
+            monthlyError = e.message ?: "월간 통계를 불러오지 못했어요."
+        } finally {
+            monthlyLoading = false
         }
     }
 
@@ -361,75 +448,109 @@ fun AnalysisScreen(
                 }
             }
         } else {
-            item {
-                Spacer(Modifier.height(24.dp))
-                MonthlySummaryCard(
-                    emotion = monthlyReport.topEmotion,
-                    percent = monthlyReport.topEmotionPercent,
-                    emotionColor = monthlyReport.topEmotionColor
-                )
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                TopEmotionsCard(monthlyReport.topEmotions)
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                EmotionFlowCard(monthlyReport.weeklyFlow)
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                EmotionDistributionCard(monthlyReport.dayColors)
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                TopFeltDayCard(
-                    subtitlePrefix = "가장 긍정적인 감정을 느낀 날은 ",
-                    dateHighlight = monthlyReport.positiveFeltDate,
-                    dateColor = PositiveDatePink,
-                    description = "설레는 감정이 가장 많았어요",
-                    bars = monthlyReport.positiveFeltBars
-                )
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                TopFeltDayCard(
-                    subtitlePrefix = "가장 부정적인 감정을 느낀 날은 ",
-                    dateHighlight = monthlyReport.negativeFeltDate,
-                    dateColor = NegativeDateNavy,
-                    description = "불안한 감정이 가장 많았어요",
-                    bars = monthlyReport.negativeFeltBars
-                )
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                PersonPlaceCard(
-                    iconRes = R.drawable.analysis_person_icon,
-                    highlightPrefix = "가장 많이 함께한 사람은 ",
-                    highlight = monthlyReport.personLabel,
-                    highlightColor = LoverPink,
-                    recordLine = "${monthlyReport.personLabel}과 함께했던 기록이에요",
-                    feelingPrefix = "${monthlyReport.personLabel}은 나에게 ",
-                    feelingHighlight = monthlyReport.personFeelingHighlight,
-                    feelingColor = LoverPink,
-                    feelingSuffix = " 감정을 느끼게 해요",
-                    pills = monthlyReport.personPills
-                )
-            }
-            item {
-                Spacer(Modifier.height(16.dp))
-                PersonPlaceCard(
-                    iconRes = R.drawable.analysis_location_icon,
-                    highlightPrefix = "가장 많이 방문한 장소는 ",
-                    highlight = monthlyReport.placeLabel,
-                    highlightColor = SchoolBlue,
-                    recordLine = "${monthlyReport.placeLabel}에서 느꼈던 기록이에요",
-                    feelingPrefix = "${monthlyReport.placeLabel}는 나에게 ",
-                    feelingHighlight = monthlyReport.placeFeelingHighlight,
-                    feelingColor = SchoolBlue,
-                    feelingSuffix = " 감정을 느끼게 해요",
-                    pills = monthlyReport.placePills
-                )
+            when {
+                monthlyLoading -> item {
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        "불러오는 중...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = BodyGray,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+                monthlyError != null -> item {
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        "월간 통계를 불러오지 못했어요. (${monthlyError})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = BodyGray,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+                monthlyStats?.topEmotion == null -> item {
+                    Spacer(Modifier.height(24.dp))
+                    Text(
+                        "이 달에 기록된 일기가 없어요.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = BodyGray,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+                else -> {
+                    val monthlyReport = toMonthlyReportData(selectedMonth, monthlyStats!!, positiveDayStats, negativeDayStats)
+                    item {
+                        Spacer(Modifier.height(24.dp))
+                        MonthlySummaryCard(
+                            emotion = monthlyReport.topEmotion,
+                            percent = monthlyReport.topEmotionPercent,
+                            emotionColor = monthlyReport.topEmotionColor
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        TopEmotionsCard(monthlyReport.topEmotions)
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        EmotionFlowCard(monthlyReport.weeklyFlow)
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        EmotionDistributionCard(monthlyReport.dayColors)
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        TopFeltDayCard(
+                            subtitlePrefix = "가장 긍정적인 감정을 느낀 날은 ",
+                            dateHighlight = monthlyReport.positiveFeltDate,
+                            dateColor = PositiveDatePink,
+                            description = monthlyReport.positiveFeltBars.firstOrNull()?.label?.let { "$it 감정이 가장 많았어요" }
+                                ?: "기록된 감정이 없어요",
+                            bars = monthlyReport.positiveFeltBars
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        TopFeltDayCard(
+                            subtitlePrefix = "가장 부정적인 감정을 느낀 날은 ",
+                            dateHighlight = monthlyReport.negativeFeltDate,
+                            dateColor = NegativeDateNavy,
+                            description = monthlyReport.negativeFeltBars.firstOrNull()?.label?.let { "$it 감정이 가장 많았어요" }
+                                ?: "기록된 감정이 없어요",
+                            bars = monthlyReport.negativeFeltBars
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        PersonPlaceCard(
+                            iconRes = R.drawable.analysis_person_icon,
+                            highlightPrefix = "가장 많이 함께한 사람은 ",
+                            highlight = monthlyReport.personLabel,
+                            highlightColor = LoverPink,
+                            recordLine = "${monthlyReport.personLabel}과 함께했던 기록이에요",
+                            feelingPrefix = "${monthlyReport.personLabel}은 나에게 ",
+                            feelingHighlight = monthlyReport.personFeelingHighlight,
+                            feelingColor = LoverPink,
+                            feelingSuffix = " 감정을 느끼게 해요",
+                            pills = monthlyReport.personPills
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(16.dp))
+                        PersonPlaceCard(
+                            iconRes = R.drawable.analysis_location_icon,
+                            highlightPrefix = "가장 많이 방문한 장소는 ",
+                            highlight = monthlyReport.placeLabel,
+                            highlightColor = SchoolBlue,
+                            recordLine = "${monthlyReport.placeLabel}에서 느꼈던 기록이에요",
+                            feelingPrefix = "${monthlyReport.placeLabel}는 나에게 ",
+                            feelingHighlight = monthlyReport.placeFeelingHighlight,
+                            feelingColor = SchoolBlue,
+                            feelingSuffix = " 감정을 느끼게 해요",
+                            pills = monthlyReport.placePills
+                        )
+                    }
+                }
             }
         }
     }
@@ -725,6 +846,8 @@ private fun EmotionFlowCard(weeklyFlow: List<WeekPoint>) {
                         .weight(1f)
                         .height(160.dp)
                 ) {
+                    // 그 달에 기록이 1주치 미만이면(주차가 1개뿐이면) 선을 그릴 두 점이 안 나와서 스킵
+                    if (weeklyFlow.size < 2) return@Canvas
                     val stepX = size.width / (weeklyFlow.size - 1)
                     // 가장 높은 값이 차트 맨 위까지 꽉 차도록 최댓값 기준으로 정규화
                     val maxValue = weeklyFlow.maxOf { it.value }
@@ -876,7 +999,7 @@ private fun TopFeltDayCard(
                 color = BodyGray
             )
             Spacer(Modifier.height(20.dp))
-            val maxPercent = bars.maxOf { it.percent }
+            val maxPercent = bars.maxOfOrNull { it.percent } ?: 0
             bars.forEach { bar ->
                 Row(
                     modifier = Modifier

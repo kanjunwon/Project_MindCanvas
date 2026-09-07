@@ -58,6 +58,7 @@ import com.gamjungseoga.app.network.DiaryEntry
 import com.gamjungseoga.app.screens.diary.DiaryListState
 import com.gamjungseoga.app.screens.diary.DiaryListViewModel
 import java.time.OffsetDateTime
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import com.gamjungseoga.app.ui.theme.AccentBlue
@@ -94,12 +95,38 @@ private data class DiaryPage(
     val showDateTag: Boolean = false
 )
 
-// TODO: 실제 데이터로 교체 (감정 분석 결과/SD3 이미지 URL은 백엔드 API 연동 후 채우기)
-private val sampleMonthlyEmotions = listOf(
-    MonthlyEmotion("6월의 감정", "즐거운", "14회 기록", imageRes = R.drawable.emotion_card_1),
-    MonthlyEmotion("5월의 감정", "우울한", "14회 기록", imageRes = R.drawable.emotion_card_2),
-    MonthlyEmotion("4월의 감정", "편안한", "14회 기록", imageRes = R.drawable.emotion_card_3)
-)
+// SD3가 달마다 대표 이미지를 만들어주는 API가 아직 없어서, 카드 장식(마스킹테이프 등)과 마찬가지로
+// 이미지는 이 3장을 순서대로 돌려씀. month/emotion/count만 실제 일기 목록에서 계산.
+private val monthlyEmotionImageRes = listOf(R.drawable.emotion_card_1, R.drawable.emotion_card_2, R.drawable.emotion_card_3)
+
+// 이번 달 포함 최근 3개월 각각에 대해, 그 달 일기들의 top_emotion 중 가장 많이 나온 감정을
+// 대표 감정으로 삼음(최빈값). GET /diaries/{userId}가 이미 각 일기의 top_emotion/created_at을
+// 내려주고 있어서 백엔드 추가 연동 없이 프론트에서 바로 집계 가능.
+private fun computeMonthlyEmotions(diaries: List<DiaryEntry>): List<MonthlyEmotion> {
+    val entriesByMonth = diaries
+        .mapNotNull { entry ->
+            val created = entry.createdAt?.let { runCatching { OffsetDateTime.parse(it) }.getOrNull() }
+            created?.let { YearMonth.from(it) to entry }
+        }
+        .groupBy({ it.first }, { it.second })
+
+    val currentMonth = YearMonth.now()
+    return (0..2).map { monthsAgo ->
+        val yearMonth = currentMonth.minusMonths(monthsAgo.toLong())
+        val topEmotionCounts = entriesByMonth[yearMonth].orEmpty()
+            .mapNotNull { it.topEmotion }
+            .groupingBy { it }
+            .eachCount()
+        val topEmotion = topEmotionCounts.maxByOrNull { it.value }
+
+        MonthlyEmotion(
+            month = "${yearMonth.monthValue}월의 감정",
+            emotion = topEmotion?.key ?: "기록 없음",
+            count = "${topEmotion?.value ?: 0}회 기록",
+            imageRes = monthlyEmotionImageRes.getOrNull(monthsAgo)
+        )
+    }
+}
 
 private val recentPageColors = listOf(PlaceholderOcean, PlaceholderNavy, PlaceholderTerracotta)
 private val recentPageDateFormatter = DateTimeFormatter.ofPattern("MMM", Locale.ENGLISH)
@@ -175,12 +202,31 @@ fun HomeScreen(diaryListViewModel: DiaryListViewModel = viewModel()) {
             Column(modifier = Modifier.padding(top = 24.dp)) {
                 SectionTitle("나의 감정")
                 Spacer(Modifier.height(16.dp))
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    itemsIndexed(sampleMonthlyEmotions) { index, item ->
-                        MonthlyEmotionCard(item, index)
+                when {
+                    listState is DiaryListState.Loading -> Text(
+                        "불러오는 중...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MonthLabelGray,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    listState is DiaryListState.Error -> Text(
+                        "감정 기록을 불러오지 못했어요. (${listState.message})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MonthLabelGray,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    else -> {
+                        val monthlyEmotions = remember(listState) {
+                            computeMonthlyEmotions((listState as DiaryListState.Loaded).diaries)
+                        }
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                        ) {
+                            itemsIndexed(monthlyEmotions) { index, item ->
+                                MonthlyEmotionCard(item, index)
+                            }
+                        }
                     }
                 }
             }
