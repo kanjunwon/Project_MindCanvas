@@ -9,4 +9,5 @@ pytest
 httpx
 passlib[bcrypt]
 bcrypt==4.0.1
-pyjwtrequests
+PyJWT
+requests
