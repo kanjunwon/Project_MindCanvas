@@ -38,6 +38,40 @@ FALLBACK_NEGATIVE_PROMPT = (
 )
 
 
+# 프론트 드롭다운에서 한국어 값이 올 경우 대비한 매핑 (영어 값이 오면 그대로 통과됨)
+_HAIR_COLOR_MAP = {
+    "검정": "black hair", "검정색": "black hair", "black": "black hair",
+    "갈색": "brown hair", "brown": "brown hair",
+    "금발": "blonde hair", "blonde": "blonde hair",
+    "밝은갈색": "light brown hair",
+    "회색": "grey hair", "은발": "silver hair", "gray": "grey hair", "grey": "grey hair",
+    "빨강": "red hair", "red": "red hair",
+    "분홍": "pink hair", "pink": "pink hair",
+}
+
+
+def _avatar_tags(glasses: bool, bangs: bool, hair_length: str, hair_color: str) -> str:
+    """
+    사용자 프로필의 아바타 속성(안경/앞머리/머리길이/머리색)을 프롬프트 태그로 변환.
+    LLM(image_prompt_service)한테 맡기면 가끔 빼먹거나 다르게 표현하는 경우가 있어서,
+    여기서 결정론적으로(항상 동일하게) 붙여 일관성을 보장한다.
+    """
+    tags = []
+    if glasses:
+        tags.append("glasses")
+    tags.append("blunt bangs" if bangs else "no bangs")
+
+    length_tag = {"short": "short hair", "medium": "medium hair", "long": "long hair"}.get(
+        hair_length, "medium hair"
+    )
+    tags.append(length_tag)
+
+    color_tag = _HAIR_COLOR_MAP.get(hair_color, hair_color if hair_color else "black hair")
+    tags.append(color_tag)
+
+    return ", ".join(tags)
+
+
 def _submit_workflow(positive_prompt: str, negative_prompt: str) -> str:
     workflow = load_workflow_template()
     workflow[POSITIVE_PROMPT_NODE_ID]["inputs"]["text"] = positive_prompt
@@ -81,18 +115,29 @@ def _upload_to_storage(image_bytes: bytes) -> str:
     return supabase.storage.from_(STORAGE_BUCKET).get_public_url(filename)
 
 
-def generate_diary_image(diary_text: str, top_emotion: str, who=None, where: str = "", when: str = "") -> str:
+def generate_diary_image(
+    diary_text: str,
+    top_emotion: str,
+    who=None,
+    where: str = "",
+    when: str = "",
+    glasses: bool = False,
+    bangs: bool = True,
+    hair_length: str = "medium",
+    hair_color: str = "black",
+) -> str:
     """
-    일기 텍스트 + 대표 감정 + Who/Where/When -> 그림일기 이미지 URL.
+    일기 텍스트 + 대표 감정 + Who/Where/When + 아바타 속성(안경/앞머리/머리길이/머리색) -> 그림일기 이미지 URL.
     (MOCK_MODE 처리는 diary 라우터 쪽에서)
 
-    who/where/when은 LLM이 프롬프트 변환할 때 인원수/장소/시간대를 정확히 반영하기 위해
-    추가로 필요해짐 (2026-08-27, image_prompt_service 도입하면서 시그니처 변경됨).
+    who/where/when은 LLM이 프롬프트 변환할 때 인원수/장소/시간대를 정확히 반영하기 위해 필요.
+    glasses/bangs/hair_length/hair_color는 사용자 프로필(아바타 커스터마이징)에서 가져온 값으로,
+    LLM을 거치지 않고 항상 동일하게 프롬프트 끝에 강제로 붙임 (일관성 보장 목적, 2026-08-28 추가).
     """
     prompt_result = translate_to_image_prompt(
         diary_text=diary_text, who=who or [], emotion=top_emotion, where=where, when=when
     )
-    positive = prompt_result["positive"]
+    positive = f"{prompt_result['positive']}, {_avatar_tags(glasses, bangs, hair_length, hair_color)}"
     negative = prompt_result.get("negative") or FALLBACK_NEGATIVE_PROMPT
 
     prompt_id = _submit_workflow(positive, negative)

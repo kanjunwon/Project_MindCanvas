@@ -1,12 +1,12 @@
-from typing import Dict, Optional
+from typing import Dict
 from pydantic import BaseModel, field_validator
 
 from app.personal_test_questions import QUESTION_IDS
 
 
 class PersonalTestSubmitRequest(BaseModel):
-    user_id: Optional[str] = None
     answers: Dict[str, int]  # {"1": 4, "2": 2, ..., "19": 5}, 1~5 척도
+    # user_id는 더 이상 여기 안 받음 - 로그인 토큰에서만 가져옴 (2026-09-09 변경)
 
     @field_validator("answers")
     @classmethod
